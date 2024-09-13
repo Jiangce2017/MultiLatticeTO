@@ -1,0 +1,43 @@
+default: &DEFAULT
+
+  #General
+  verbose: True
+  device: 'cuda:1'
+  interactive: False
+  lattice_dataset: 'strut'
+  lattice_data_file_path: './data/struct/dataset_strut.pkl'
+  vae_file_path: './data/struct/vae.pickle'
+  cell_width: 28
+  nelx: 60
+  nely: 30
+  example: 3  # see ExperiemntSetting Class
+  cell_type: 'lattice' # lattice or solid
+  simplexDim: 8
+  fno: True
+  nn_type: 'fno' # cnn 
+  numModex: 8
+  numModey: 4
+  searchMode: 'simplex' # simplex or cubic 
+  latentDim: 16
+  numLayers: 5 # the depth of the NN
+  numNeuronsPerLyr: 20 # the height of the NN
+  minEpochs: 20  # minimum number of iterations
+  maxEpochs: 30  # Max number of iterations
+  penal: 2  # SIMP penalization constant, starting value
+  Emin: 1e-6
+  Emax: 1.0
+  useSavedNet: False # use a net previouslySaved  as starting point (exampleName_nelx_nely.nt in ./results folder)
+  desiredVolumeFraction: 0.3
+  learningRate: 0.01 
+  data_dir: './data/struct'
+  results_dir: './results/struct'
+
+  wandb:
+      log: False
+      name: None # If None, config will be used but you can override it here
+      group: ""
+      project: ""
+      entity: "" # put your username here
+      sweep: False
+      log_output: True
+      eval_interval: 1
