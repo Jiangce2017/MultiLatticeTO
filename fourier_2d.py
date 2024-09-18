@@ -154,19 +154,6 @@ class FNO2d(nn.Module):
 class FNO2d_Lattice(nn.Module):
     def __init__(self,numLayers, modes1, modes2,  width,searchMode,simplexDim,latentDim):
         super(FNO2d_Lattice, self).__init__()
-
-        """
-        The overall network. It contains 4 layers of the Fourier layer.
-        1. Lift the input to the desire channel dimension by self.fc0 .
-        2. 4 layers of the integral operators u' = (W + K)(u).
-            W defined by self.w; K defined by self.conv .
-        3. Project from the channel space to the output space by self.fc1 and self.fc2 .
-        
-        input: the solution of the coefficient function and locations (a(x, y), x, y)
-        input shape: (batchsize, x=s, y=s, c=3)
-        output: the solution 
-        output shape: (batchsize, x=s, y=s, c=1)
-        """
         self.numLayers = numLayers
         self.modes1 = modes1
         self.modes2 = modes2
@@ -176,85 +163,30 @@ class FNO2d_Lattice(nn.Module):
             self.outdim = 2+simplexDim
         elif searchMode == 'cubic':
             self.outdim = 1+latentDim
-
         self.p = nn.Linear(2, self.width) # input channel is 3: (a(x, y), x, y)
-
-        # self.conv_layers = []
-        # self.mlp_layers = []
-        # self.w_layers = []
-        # for i in range(numLayers):
-        #     self.conv_layers.append(SpectralConv2d(self.width, self.width, self.modes1, self.modes2))
-        #     self.mlp_layers.append(MLP(self.width, self.width, self.width))
-        #     self.w_layers.append(nn.Conv2d(self.width, self.width, 1))
-        
         self.conv0 = SpectralConv2d(self.width, self.width, self.modes1, self.modes2)
         self.conv1 = SpectralConv2d(self.width, self.width, self.modes1, self.modes2)
-        # self.conv2 = SpectralConv2d(self.width, self.width, self.modes1, self.modes2)
-        # self.conv3 = SpectralConv2d(self.width, self.width, self.modes1, self.modes2)
-
         self.mlp0 = MLP(self.width, self.width, self.width)
         self.mlp1 = MLP(self.width, self.width, self.width)
-        # self.mlp2 = MLP(self.width, self.width, self.width)
-        # self.mlp3 = MLP(self.width, self.width, self.width)
-
         self.w0 = nn.Conv2d(self.width, self.width, 1)
         self.w1 = nn.Conv2d(self.width, self.width, 1)
-        # self.w2 = nn.Conv2d(self.width, self.width, 1)
-        # self.w3 = nn.Conv2d(self.width, self.width, 1)
-
         self.q = MLP(self.width, self.outdim, self.width * 4) # output channel is 1: u(x, y)
-
-
         self.bn1 = nn.BatchNorm2d(self.width)
         self.bn2 = nn.BatchNorm2d(self.outdim)
 
     def forward(self, x):
-        #grid = self.get_grid(x.shape, x.device)
-        #x = torch.cat((x, grid), dim=-1)
-        #x = grid
-        x = self.p(x)
-        
+        x = self.p(x)       
         x = x.permute(0, 3, 1, 2)
         x = self.bn1(x)
-
-        #x = F.pad(x, [0,self.padding, 0,self.padding])
-
-        # for i in range(self.numLayers-1):
-        #     x1 = self.conv_layers[i](x)
-        #     x1 = self.mlp_layers[i](x1)
-        #     x2 = self.w_layers[i](x)
-        #     x = x1+x2
-        #     x = F.relu(x)
-        # x1 = self.conv_layers[-1](x)
-        # x1 = self.mlp_layers[-1](x1)
-        # x2 = self.w_layers[-1](x)
-        # x = x1+x2
-
         x1 = self.conv0(x)
         x1 = self.mlp0(x1)
         x2 = self.w0(x)
         x = x1 + x2
         x = F.relu(x)
-
         x1 = self.conv1(x)
         x1 = self.mlp1(x1)
         x2 = self.w1(x)
         x = x1 + x2
-
-        # x = F.relu(x)
-        # x1 = self.conv2(x)
-        # x1 = self.mlp2(x1)
-        # x2 = self.w2(x)
-        # x = x1 + x2
-        # x = F.relu(x)
-
-        # x1 = self.conv3(x)
-        # x1 = self.mlp3(x1)
-        # x2 = self.w3(x)
-        # x = x1 + x2
-
-        
-        #x = x[..., :-self.padding, :-self.padding]
         x = self.q(x)
         x = self.bn2(x)
         x = x.permute(0, 2, 3, 1)

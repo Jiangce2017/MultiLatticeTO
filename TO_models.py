@@ -3,14 +3,26 @@ import torch
 from utils import set_seed
 from fourier_2d import FNO2d,FNO2d_Lattice,CNN2d_Lattice
 
-#%% Neural network
+
 class TopNet(nn.Module):
-    # inputDim = 2; # x and y coordn of the point
-    # outputDim = 2; # if material/void at the point
-    
+    def __init__(self,config,symXAxis,symYAxis):
+        super(TopNet, self).__init__()
+        nn_type = config.nn_type
+        if nn_type == 'FC':
+            self.model = FC_Net(config,symXAxis,symYAxis)
+        elif nn_type == 'FNO':
+            self.model = FNO_Net(config,symXAxis,symYAxis)
+        elif nn_type == 'CNN':
+            self.model = CNN_Net(config,symXAxis,symYAxis)
+
+    def forward(self, x,resolution, fixedIdx):
+        return self.model(x,resolution, fixedIdx)
+
+class FC_Net(nn.Module):
     def __init__(self, config,symXAxis,symYAxis):
-        self.nelx = config.nelx; # to impose symm, get size of domain
-        self.nely = config.nely;
+        super(FC_Net,self).__init__()
+        self.nelx = config.nelx # to impose symm, get size of domain
+        self.nely = config.nely
         self.inputDim = 2
         if config.searchMode == 'simplex':
             self.outputDim = 2 + config.simplexDim
@@ -19,35 +31,35 @@ class TopNet(nn.Module):
         self.searchMode = config.searchMode
         self.simplexDim = config.simplexDim
         self.latentDim = config.latentDim 
-        self.symXAxis = symXAxis; # set T/F to impose symm
-        self.symYAxis = symYAxis;
-        super().__init__();
-        self.layers = nn.ModuleList();
-        current_dim = self.inputDim;
-        manualSeed = 1234; # NN are seeded manually 
+        self.symXAxis = symXAxis  # set T/F to impose symm
+        self.symYAxis = symYAxis
+        
+        self.layers = nn.ModuleList() 
+        current_dim = self.inputDim 
+        manualSeed = 1234  # NN are seeded manually 
         set_seed(manualSeed)
         for lyr in range(config.numLayers): # define the layers
-            l = nn.Linear(current_dim, config.numNeuronsPerLyr);
-            nn.init.xavier_normal_(l.weight);
-            nn.init.zeros_(l.bias);
-            self.layers.append(l);
-            current_dim = config.numNeuronsPerLyr;
-        self.layers.append(nn.Linear(current_dim, self.outputDim));
-        self.bnLayer = nn.ModuleList();
+            l = nn.Linear(current_dim, config.numNeuronsPerLyr) 
+            nn.init.xavier_normal_(l.weight) 
+            nn.init.zeros_(l.bias) 
+            self.layers.append(l) 
+            current_dim = config.numNeuronsPerLyr 
+        self.layers.append(nn.Linear(current_dim, self.outputDim)) 
+        self.bnLayer = nn.ModuleList() 
         for lyr in range(config.numLayers): # batch norm 
-            self.bnLayer.append(nn.BatchNorm1d(config.numNeuronsPerLyr));
+            self.bnLayer.append(nn.BatchNorm1d(config.numNeuronsPerLyr)) 
     def forward(self, x,resolution, fixedIdx = None):
         # LeakyReLU ReLU6 ReLU
-        m = nn.ReLU6(); # LeakyReLU 
+        m = nn.ReLU6()  # LeakyReLU 
         ctr = 0
         if(self.symYAxis):
-            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx);
+            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx) 
         else:
-            xv = x[:,0];
+            xv = x[:,0] 
         if(self.symXAxis):
-            yv = 0.5*self.nely + torch.abs( x[:,1] - 0.5*self.nely) ;
+            yv = 0.5*self.nely + torch.abs( x[:,1] - 0.5*self.nely)  
         else:
-            yv = x[:,1];
+            yv = x[:,1] 
         x = torch.transpose(torch.stack((xv,yv)),0,1)
 
         for layer in self.layers[:-1]: # forward prop
@@ -67,19 +79,20 @@ class TopNet(nn.Module):
         return  rho, t
         
     def  getWeights(self): # stats about the NN
-        modelWeights = [];
-        modelBiases = [];
+        modelWeights = [] 
+        modelBiases = [] 
         for lyr in self.layers:
-            modelWeights.extend(lyr.weight.data.view(-1).cpu().numpy());
-            modelBiases.extend(lyr.bias.data.view(-1).cpu().numpy());
-        return modelWeights, modelBiases;
+            modelWeights.extend(lyr.weight.data.view(-1).cpu().numpy()) 
+            modelBiases.extend(lyr.bias.data.view(-1).cpu().numpy()) 
+        return modelWeights, modelBiases 
 
-class TopFNO(nn.Module):
-    #inputDim = 2; # x and y coordn of the point
-    #outputDim = 2; # if material/void at the point
+class FNO_Net(nn.Module):
+    #inputDim = 2  # x and y coordn of the point
+    #outputDim = 2  # if material/void at the point
     def __init__(self,config,symXAxis,symYAxis):
-        self.nelx = config.nelx; # to impose symm, get size of domain
-        self.nely = config.nely;
+        super(FNO_Net,self).__init__()
+        self.nelx = config.nelx  # to impose symm, get size of domain
+        self.nely = config.nely 
         self.inputDim = 2
         if config.searchMode == 'simplex':
             self.outputDim = 2 + config.simplexDim
@@ -88,22 +101,17 @@ class TopFNO(nn.Module):
         self.searchMode = config.searchMode
         self.simplexDim = config.simplexDim
         self.latentDim = config.latentDim
-        #self.outputDim = 1+ latentParDim
-        self.symXAxis = symXAxis; # set T/F to impose symm
-        self.symYAxis = symYAxis;
-        super().__init__();
-        manualSeed = 1234; # NN are seeded manually 
-        set_seed(manualSeed)
-        # self.model = FNO(n_modes=(numModex,numModey), hidden_channels=64,in_channels=self.inputDim,out_channels=self.outputDim,n_layers=4,\
-        #                  factorization='tucker', rank=0.42,non_linearity=nn.ReLU())
+        self.symXAxis = symXAxis  # set T/F to impose symm
+        self.symYAxis = symYAxis 
         
-        #self.model = FNO2d(numModex,numModey,numNeuronsPerLyr)
-        self.model = FNO2d_Lattice(config.numLayers,config.numModex,config.numModey,config.numNeuronsPerLyr,config.searchMode,config.simplexDim,config.latentDim)
+        manualSeed = 1234  # NN are seeded manually 
+        set_seed(manualSeed)
+        self.fno = FNO2d_Lattice(config.numLayers,config.numModex,config.numModey,config.numNeuronsPerLyr,config.searchMode,config.simplexDim,config.latentDim)
     def forward(self, x,resolution, fixedIdx = None):
         if(self.symYAxis):
-            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx);
+            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx) 
         else:
-            xv = x[:,0];
+            xv = x[:,0] 
         if(self.symXAxis):
             yv = 0.5*self.nely + torch.abs( x[:,1] - 0.5*self.nely) 
         else:
@@ -112,7 +120,7 @@ class TopFNO(nn.Module):
         
         x = x.view(1,self.nelx*resolution,self.nely*resolution,2)
 
-        x = self.model(x) 
+        x = self.fno(x) 
 
         if (self.symYAxis):
             x_mid_idx = self.nelx//2
@@ -149,54 +157,43 @@ class TopFNO(nn.Module):
         return  rho, t
     
     def  getWeights(self): # stats about the NN
-        modelWeights = [];
-        modelBiases = [];
-        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy());
-        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy());
-        return modelWeights, modelBiases;
+        modelWeights = [] 
+        modelBiases = [] 
+        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy()) 
+        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy()) 
+        return modelWeights, modelBiases 
 
-class TopCNN(nn.Module):
-    #inputDim = 2; # x and y coordn of the point
-    #outputDim = 2; # if material/void at the point
-    def __init__(self,numLayers, numModex,numModey,numNeuronsPerLyr,nelx, nely, symXAxis, symYAxis,searchMode,simplexDim,latentDim):
-        self.nelx = nelx; # to impose symm, get size of domain
-        self.nely = nely;
+class CNN_Net(nn.Module):
+    def __init__(self,config,symXAxis,symYAxis):
+        super(CNN_Net,self).__init__()
+        self.nelx = config.nelx  # to impose symm, get size of domain
+        self.nely = config.nely 
         self.inputDim = 2
-        if searchMode == 'simplex':
-            self.outputDim = 2 + simplexDim
-        elif searchMode == 'cubic':
-            self.outputDim = 1 + latentDim
-        self.searchMode = searchMode
-        self.simplexDim = simplexDim
-        self.latentDim = latentDim
-        #self.outputDim = 1+ latentParDim
-        self.symXAxis = symXAxis; # set T/F to impose symm
-        self.symYAxis = symYAxis;
-        super().__init__();
-        manualSeed = 1234; # NN are seeded manually 
+        if config.searchMode == 'simplex':
+            self.outputDim = 2 + config.simplexDim
+        elif config.searchMode == 'cubic':
+            self.outputDim = 1 + config.latentDim
+        self.searchMode = config.searchMode
+        self.simplexDim = config.simplexDim
+        self.latentDim = config.latentDim
+        self.symXAxis = symXAxis  # set T/F to impose symm
+        self.symYAxis = symYAxis 
+        manualSeed = 1234  # NN are seeded manually 
         set_seed(manualSeed)
-        # self.model = FNO(n_modes=(numModex,numModey), hidden_channels=64,in_channels=self.inputDim,out_channels=self.outputDim,n_layers=4,\
-        #                  factorization='tucker', rank=0.42,non_linearity=nn.ReLU())
-        
-        #self.model = FNO2d(numModex,numModey,numNeuronsPerLyr)
-        self.model = CNN2d_Lattice(numLayers,numModex,numModey,numNeuronsPerLyr,searchMode,simplexDim,latentDim)
+        self.model = CNN2d_Lattice(config.numLayers,config.numModex,config.numModey,config.numNeuronsPerLyr,config.searchMode,config.simplexDim,config.latentDim)
     def forward(self, x,resolution, fixedIdx = None):
         if(self.symYAxis):
-            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx);
+            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx) 
         else:
-            xv = x[:,0];
+            xv = x[:,0] 
         if(self.symXAxis):
             yv = 0.5*self.nely + torch.abs( x[:,1] - 0.5*self.nely) 
         else:
             yv = x[:,1]
         x = torch.transpose(torch.stack((xv,yv)),0,1)
         x = x.view(1,self.nelx*resolution,self.nely*resolution,2)
-
         x = self.model(x)  
-
         out = x.view(-1,self.outputDim)
-        #print("out shape: {}".format(out.shape))
-        #print("fixedIdx shape: {}".format(fixedIdx.shape))
         if self.searchMode == 'simplex':
             rho = torch.sigmoid(out[:,0])
             rho = (1-fixedIdx)*rho + fixedIdx*(rho + torch.abs(1-rho))
@@ -205,27 +202,20 @@ class TopCNN(nn.Module):
             out = torch.sigmoid(out)
             rho = out[:,0]
             t = out[:,1:]
-
-        # out = torch.sigmoid(x)
-        # out = out.view(-1,self.outputDim)
-        # rho = out[:,0] # grab only the first output
-        # rho = (1-fixedIdx)*rho + fixedIdx*(rho + torch.abs(1-rho))
-        # t = out[:,1:]
         return  rho, t
-    
     def  getWeights(self): # stats about the NN
-        modelWeights = [];
-        modelBiases = [];
-        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy());
-        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy());
-        return modelWeights, modelBiases;
+        modelWeights = [] 
+        modelBiases = [] 
+        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy()) 
+        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy()) 
+        return modelWeights, modelBiases 
 
-class TopFNO_branch(nn.Module):
-    #inputDim = 2; # x and y coordn of the point
-    #outputDim = 2; # if material/void at the point
+class FNO_Net_branch(nn.Module):
+    #inputDim = 2  # x and y coordn of the point
+    #outputDim = 2  # if material/void at the point
     def __init__(self,numLayers, numModex,numModey,numNeuronsPerLyr,nelx, nely, symXAxis, symYAxis,searchMode,simplexDim,latentDim):
-        self.nelx = nelx; # to impose symm, get size of domain
-        self.nely = nely;
+        self.nelx = nelx  # to impose symm, get size of domain
+        self.nely = nely 
         self.inputDim = 2
         if searchMode == 'simplex':
             self.outputDim = 2 + simplexDim
@@ -235,10 +225,10 @@ class TopFNO_branch(nn.Module):
         self.simplexDim = simplexDim
         self.latentDim = latentDim
         #self.outputDim = 1+ latentParDim
-        self.symXAxis = symXAxis; # set T/F to impose symm
-        self.symYAxis = symYAxis;
-        super().__init__();
-        manualSeed = 1234; # NN are seeded manually 
+        self.symXAxis = symXAxis  # set T/F to impose symm
+        self.symYAxis = symYAxis 
+        super(FNO_Net_branch,self).__init__() 
+        manualSeed = 1234  # NN are seeded manually 
         set_seed(manualSeed)
         # self.model = FNO(n_modes=(numModex,numModey), hidden_channels=64,in_channels=self.inputDim,out_channels=self.outputDim,n_layers=4,\
         #                  factorization='tucker', rank=0.42,non_linearity=nn.ReLU())
@@ -248,9 +238,9 @@ class TopFNO_branch(nn.Module):
         self.density_model = FNO2d_Lattice(numLayers,2,1,5,searchMode,-1,latentDim)
     def forward(self, x,resolution, fixedIdx = None):
         if(self.symYAxis):
-            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx);
+            xv = 0.5*self.nelx + torch.abs( x[:,0] - 0.5*self.nelx) 
         else:
-            xv = x[:,0];
+            xv = x[:,0] 
         if(self.symXAxis):
             yv = 0.5*self.nely + torch.abs( x[:,1] - 0.5*self.nely) 
         else:
@@ -298,8 +288,8 @@ class TopFNO_branch(nn.Module):
         return  rho, t
     
     def  getWeights(self): # stats about the NN
-        modelWeights = [];
-        modelBiases = [];
-        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy());
-        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy());
-        return modelWeights, modelBiases;
+        modelWeights = [] 
+        modelBiases = [] 
+        modelWeights.extend(self.model.weight.data.view(-1).cpu().numpy()) 
+        modelBiases.extend(self.model.bias.data.view(-1).cpu().numpy()) 
+        return modelWeights, modelBiases 

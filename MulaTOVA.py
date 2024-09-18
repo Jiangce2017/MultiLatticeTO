@@ -14,7 +14,7 @@ import matplotlib
 from matplotlib import cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import pickle
-from TO_models import TopFNO,TopNet,TopCNN,TopFNO_branch
+from TO_models import TopNet
 from utils import PytorchMinMaxScaler, plot_latent,setDevice,set_seed
 from material_models import MaterialModel
 from material_models import elasticity
@@ -39,20 +39,12 @@ class TopologyOptimizer:
         self.results_dir = config.results_dir
         self.interactive = config.interactive
         self.desiredVolumeFraction = config.desiredVolumeFraction
+        self.exper_name = self.exampleName + "_" + config.nn_type+ "_"+config.cell_type + "_" + str(config.desiredVolumeFraction) 
         self.selecting_loading(config.example)
-        self.initialzeExperiment(config)
         self.initializeFE(config)
         self.initializeOptimizer(config)
         self.InitializeMaterialModel(config,device)
-
-    def initialzeExperiment(self,config):
-        self.exper_name = self.exampleName + "_"+config.cell_type + "_" + str(config.desiredVolumeFraction) + "_" + str(config.nelx) + "_" + str(config.nely)
-        if config.fno:
-            self.exper_name +=  "_" + str(config.numModex)+ "_" + str(config.numModey)
-        if config.cell_type == "lattice" and config.searchMode == "simplex":
-            self.exper_name += "_"+ config.searchMode+ "_"+ str(config.simplexDim)
-        elif config.cell_type == "lattice" and config.searchMode == "cubic":
-            self.exper_name += "_"+ config.searchMode
+        
 
     def initializeFE(self,config):
         self.FE = StructuralFE() 
@@ -62,12 +54,7 @@ class TopologyOptimizer:
     
     def initializeOptimizer(self, config):
         self.density = config.desiredVolumeFraction*np.ones((self.nelx*self.nely))
-        if config.fno:
-            self.topNet = TopFNO(config,self.symXAxis,self.symYAxis).to(device)
-            #self.topNet = TopFNO_branch(numLayers,self.numModex,self.numModey,numNeuronsPerLyr,self.FE.nelx, self.FE.nely, self.symXAxis, self.symYAxis,searchMode=self.searchMode,simplexDim=self.simplexDim,latentDim=latentDim).to(device)
-            #self.topNet = TopCNN(numLayers,self.numModex,self.numModey,numNeuronsPerLyr,self.FE.nelx, self.FE.nely, self.symXAxis, self.symYAxis,searchMode=self.searchMode,simplexDim=self.simplexDim,latentDim=latentDim).to(device)
-        else:
-            self.topNet = TopNet(config,self.symXAxis,self.symYAxis).to(device) 
+        self.topNet = TopNet(config,self.symXAxis,self.symYAxis).to(device)
         self.objective = 0.
         self.convergenceHistory = []
 
@@ -130,7 +117,6 @@ class TopologyOptimizer:
                   .format(epoch, self.objective.item()*self.obj0 ,currentVolumeFraction,loss.item(),relGreyElements))
             if ((epoch > config.minEpochs ) & (relGreyElements < 0.035) & (volConstraint< 0) ):
                 break 
-        #self.plotTO(epoch,True) 
         self.plotTO(epoch,True) 
         print("{:3d} J: {:.2F}; Vf: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
              .format(epoch, self.objective.item()*self.obj0 ,currentVolumeFraction,loss.item(),relGreyElements))  
