@@ -122,23 +122,22 @@ class MaterialModel:
         train = dataset["train"]  # contains indices: 0 = unit cells, 1 = stiffness tensors, 2 = volume fractions
         test = dataset["test"] 
         print("total train data:{}".format(len(train)) )
-        print(train[100][0])
-        print(train[0][0].shape)
         latent_dimensionality = 16
         vae  = VariationalAutoencoder(latent_dimensionality).to(device)
 
-        # # Load the model from a checkpoint
-        # checkpoint = torch.load(lattice_model_file)
-        # # Load the stiffness normalizer from the checkpoint
-        # scaler = checkpoint['scaler']
-        # # Load the model parameters from the checkpoint
-        # model_parameters = checkpoint['model']
-        # vae.load_state_dict(model_parameters)
-
-        with open(config.vae_file_path, "rb") as fp:
-            model_parameters = pickle.load(fp)
-            vae.load_state_dict(model_parameters['model'])
-            scaler = model_parameters['scaler']
+        if config.lattice_dataset == 'struct':
+            with open(config.vae_file_path, "rb") as fp:
+                model_parameters = pickle.load(fp)
+                vae.load_state_dict(model_parameters['model'])
+                scaler = model_parameters['scaler']
+        elif config.lattice_dataset == 'ideal':
+            # Load the model from a checkpoint
+            checkpoint = torch.load(config.vae_file_path)
+            # Load the stiffness normalizer from the checkpoint
+            scaler = checkpoint['scaler']
+            # Load the model parameters from the checkpoint
+            model_parameters = checkpoint['model']
+            vae.load_state_dict(model_parameters)
         
         self.vae = vae
         self.scaler = scaler
@@ -148,8 +147,6 @@ class MaterialModel:
         latent_points_arr = torch.cat(latent_points_original,dim=0)
 
         print("total sample points: {}".format(latent_points_arr.shape[0]))
-        print(latent_points_arr.shape)
-        print(latent_points_arr[:3,:])
         dist_min = torch.min(L2_dist(latent_points_arr[1:,:],latent_points_arr[:-1,:]))
         dist_max = torch.max(L2_dist(latent_points_arr[1:,:],latent_points_arr[:-1,:]))
         for i_point in range(latent_points_arr.shape[0]-1):
@@ -159,29 +156,14 @@ class MaterialModel:
                     dist_min = dist
                 if dist > dist_max:
                     dist_max = dist
-        
         print("dist_min:{}".format(dist_min))
         print("dist_max:{}".format(dist_max))
         
         if self.searchMode == 'simplex':
-            # # Select random data points for interpolating 
-            # idx = np.random.permutation(range(latent_points_arr.shape[0]))
-            # latent_points_arr = latent_points_arr[idx]
-            # simplex_points = latent_points_arr[:self.simplexDim+1,:]
-
-            # radius = 2*dist_min
-            # neighbors = torch.zeros(latent_points_arr.shape[0])
-            # for i_point in range(latent_points_arr.shape[0]):
-            #     dist2points = L2_dist(latent_points_arr,latent_points_arr[[i_point],:])
-            #     neighbors[i_point]=torch.sum(dist2points < radius)
-            # # find the points have the most points in its neighbor ball
-            # print("the most number of neighbors: {}".format(torch.max(neighbors,dim=0).values))
-            # nearest_center_point = torch.max(neighbors,dim=0).indices       
-            
             radius = 3*dist_min
             virtual_center = torch.mean(latent_points_arr,dim=0)
             dist_2_virtual_center = L2_dist(latent_points_arr,virtual_center)
-            nearest_center_point = torch.max(dist_2_virtual_center,dim=0).indices
+            nearest_center_point = torch.min(dist_2_virtual_center,dim=0).indices #max
             center = latent_points_arr[nearest_center_point,:]
             simplex_points = torch.zeros((self.simplexDim+1,latent_points_arr.shape[1]))
             dist_2_center = L2_dist(latent_points_arr,center)
@@ -195,33 +177,9 @@ class MaterialModel:
                     L += L2_dist(candidates,simplex_points[i_point,:])
                 farest_point = torch.max(L,dim=0).indices
                 simplex_points[i_dim,:] = candidates[farest_point,:]
-
-
-
-            # neighbors = torch.zeros(latent_points_arr.shape[0])
-            # for i_point in range(latent_points_arr.shape[0]):
-            #     dist2points = L2_dist(latent_points_arr,latent_points_arr[[i_point],:])
-            #     neighbors[i_point]=torch.sum(dist2points < radius)
-            # # find the points have the most points in its neighbor ball
-            # print("the most number of neighbors: {}".format(torch.max(neighbors,dim=0).values))
-            # point = torch.max(neighbors,dim=0).indices
-            # #### select self.simplexDim + 1 points
-            # simplex_points = torch.zeros((self.simplexDim+1,latent_points_arr.shape[1]))
-            # simplex_points[0,:] = latent_points_arr[point,:]
-            # select_mask = torch.arange(latent_points_arr.shape[0]) != point
-            # latent_points_arr = latent_points_arr[select_mask,:]
-            # for i_dim in range(1,self.simplexDim+1):
-            #     dist = L2_dist(latent_points_arr,simplex_points[[i_dim-1],:])
-            #     nearest_point = torch.max(dist,dim=0).indices
-            #     simplex_points[i_dim,:] = latent_points_arr[nearest_point]
-            #     select_mask = torch.arange(latent_points_arr.shape[0]) != nearest_point
-            #     latent_points_arr = latent_points_arr[select_mask,:]
-
-            
             interpolate_list, nn_C, v = self.vae.decoder(simplex_points, self.scaler)
 
             self.simplex_points = simplex_points
-            #print("plot lattices")
             
             fig, ax = plt.subplots(1,self.simplexDim+1)
             cmap = 'Oranges'
@@ -256,10 +214,6 @@ class MaterialModel:
             latent_vec = torch.einsum('ij,jk->ik',nn_t,self.simplex_points)
         elif self.searchMode == 'cubic':
             latent_vec = self.origin + self.radius*(2*nn_t-1)
-        # if self.latentParDim == 1:
-        #     latent_vec = self.z_1 + (self.z_2 - self.z_1)*nn_t     
-        # elif  self.latentParDim == 16:
-        #     latent_vec = self.origin + self.radius*(2*nn_t-1)
         interpolate_list, nn_C, v = self.vae.decoder(latent_vec, self.scaler)
         return interpolate_list, nn_C, v 
     

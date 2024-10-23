@@ -34,13 +34,17 @@ class TopologyOptimizer:
     def __init__(self,config):
         self.nelx = config.nelx
         self.nely = config.nely
+        self.len_x = config.len_x
+        self.len_y = config.len_y
+        self.max_grad = config.max_grad
+        self.simplexDim = config.simplexDim
         self.cell_width = config.cell_width
         self.cell_type = config.cell_type
         self.results_dir = config.results_dir
         self.interactive = config.interactive
         self.desiredVolumeFraction = config.desiredVolumeFraction
-        self.exper_name = self.exampleName + "_" + config.nn_type+ "_"+config.cell_type + "_" + str(config.desiredVolumeFraction) 
         self.selecting_loading(config.example)
+        self.exper_name = self.exampleName + "_" + config.nn_type+ "_"+config.cell_type + "_" + str(config.desiredVolumeFraction) 
         self.initializeFE(config)
         self.initializeOptimizer(config)
         self.InitializeMaterialModel(config,device)
@@ -60,6 +64,15 @@ class TopologyOptimizer:
 
     def InitializeMaterialModel(self,config,device):
         self.material_model = MaterialModel(config,device)
+
+    def compute_gradient_norm(self,nn_t):
+        nn_t_matrix = nn_t.reshape(self.nelx, self.nely,self.simplexDim+1)
+        dx = self.len_x/self.nelx
+        dy = self.len_y/self.nely
+        ddx = (nn_t_matrix[1:,:,:]-nn_t_matrix[:-1,:,:])/dx
+        ddy = (nn_t_matrix[:,1:,:]-nn_t_matrix[:,:-1,:])/dy
+        grad_norm = torch.sqrt(ddx[:,1:,:]**2+ddy[1:,:,:]**2)
+        return torch.max(torch.flatten(grad_norm))
 
     def optimizeDesign(self,config):
         self.convergenceHistory = [] 
@@ -87,6 +100,7 @@ class TopologyOptimizer:
                 true_rho = nn_rho*true_v 
                 u,Jelem = self.FE.solvelatticetorch(nn_rho,nn_C)
                 compliance = torch.sum(self.FE.Emax*(nn_rho**self.FE.penal)*Jelem)
+                grad_norm = self.compute_gradient_norm(nn_t)
             else:
                 u,Jelem = self.FE.solvetorch(nn_rho)
                 true_rho = nn_rho
@@ -96,9 +110,11 @@ class TopologyOptimizer:
             objective = compliance/self.obj0
             
             volConstraint =((torch.mean(true_rho)/config.desiredVolumeFraction) - 1.0) 
+            gradConstraint = 1/(1+torch.exp(-2*(grad_norm-self.max_grad)))
             currentVolumeFraction = torch.mean(true_rho).item() 
             self.objective = objective
-            loss = self.objective+ alpha*pow(volConstraint,2)
+            
+            loss = self.objective+ alpha*(pow(volConstraint,2)+gradConstraint)
             alpha = min(alphaMax, alpha + alphaIncrement) 
             loss.backward(retain_graph=True) 
             torch.nn.utils.clip_grad_norm_(self.topNet.parameters(),nrmThreshold)
@@ -113,13 +129,13 @@ class TopologyOptimizer:
             if(epoch % 10 == 0):
                 if config.interactive:
                     self.plotTO(epoch) 
-                print("{:3d} J: {:.2F}; Vf: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
-                  .format(epoch, self.objective.item()*self.obj0 ,currentVolumeFraction,loss.item(),relGreyElements))
+                print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+                  .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, grad_norm.item(), loss.item(),relGreyElements))
             if ((epoch > config.minEpochs ) & (relGreyElements < 0.035) & (volConstraint< 0) ):
                 break 
         self.plotTO(epoch,True) 
-        print("{:3d} J: {:.2F}; Vf: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
-             .format(epoch, self.objective.item()*self.obj0 ,currentVolumeFraction,loss.item(),relGreyElements))  
+        print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+                  .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, grad_norm.item(), loss.item(),relGreyElements))
         torch.save(self.topNet, savedNetFileName)
         torch.save(self.material_model, savedMaterialNetFileName)
         ### save data

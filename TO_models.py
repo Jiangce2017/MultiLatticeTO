@@ -148,12 +148,6 @@ class FNO_Net(nn.Module):
             out = torch.sigmoid(out)
             rho = out[:,0]
             t = out[:,1:]
-
-        # out = torch.sigmoid(x)
-        # out = out.view(-1,self.outputDim)
-        # rho = out[:,0] # grab only the first output
-        # rho = (1-fixedIdx)*rho + fixedIdx*(rho + torch.abs(1-rho))
-        # t = out[:,1:]
         return  rho, t
     
     def  getWeights(self): # stats about the NN

@@ -12,7 +12,7 @@ config_name = "default"
 pipe = ConfigPipeline(
     [
         YamlConfig(
-            "./struct.yaml", config_name="default", config_folder="./config"
+            "./ideal.yaml", config_name="default", config_folder="./config"
         ),
         ArgparseConfig(infer_types=True, config_name=None, config_file=None),
         YamlConfig(config_folder="./config"),
@@ -63,13 +63,7 @@ plt.close('all')
 start = time.perf_counter()
 
 topOpt = TopologyOptimizer(config)
-#topOpt.selecting_loading(config.example)
-#topOpt.initialzeExperiment() 
-#topOpt.initializeFE() 
-#topOpt.initializeOptimizer() 
-#topOpt.InitializeMaterialModel()
-topOpt.optimizeDesign(config)
-#topOpt.check_validality()  
+topOpt.optimizeDesign(config) 
 print("Time taken (secs): {:.2F}".format( time.perf_counter() - start))
 print(topOpt.exper_name)
 topOpt.plotConvergence() 
