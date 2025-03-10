@@ -12,7 +12,7 @@ config_name = "default"
 pipe = ConfigPipeline(
     [
         YamlConfig(
-            "./ideal.yaml", config_name="default", config_folder="./config"
+            "./struct.yaml", config_name="default", config_folder="./config"
         ),
         ArgparseConfig(infer_types=True, config_name=None, config_file=None),
         YamlConfig(config_folder="./config"),
@@ -20,6 +20,8 @@ pipe = ConfigPipeline(
 )
 config = pipe.read_conf()
 config_name = pipe.steps[-1].config_name
+
+print(config.vae_file_path)
 
 ## Set up WandB logging
 if config.wandb.log:
@@ -59,11 +61,12 @@ overrideGPU = False
 device = setDevice(overrideGPU) 
 torch.autograd.set_detect_anomaly(True)
 
-plt.close('all') 
-start = time.perf_counter()
+for config.example in [1]:
+    plt.close('all') 
+    start = time.perf_counter()
 
-topOpt = TopologyOptimizer(config)
-topOpt.optimizeDesign(config) 
-print("Time taken (secs): {:.2F}".format( time.perf_counter() - start))
-print(topOpt.exper_name)
-topOpt.plotConvergence() 
+    topOpt = TopologyOptimizer(config)
+    topOpt.optimizeDesign(config) 
+    print("Time taken (secs): {:.2F}".format( time.perf_counter() - start))
+    print(topOpt.exper_name)
+    topOpt.plotConvergence() 

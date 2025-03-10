@@ -125,7 +125,7 @@ class MaterialModel:
         latent_dimensionality = 16
         vae  = VariationalAutoencoder(latent_dimensionality).to(device)
 
-        if config.lattice_dataset == 'struct':
+        if config.lattice_dataset == 'strut':
             with open(config.vae_file_path, "rb") as fp:
                 model_parameters = pickle.load(fp)
                 vae.load_state_dict(model_parameters['model'])

@@ -14,9 +14,30 @@ class TopNet(nn.Module):
             self.model = FNO_Net(config,symXAxis,symYAxis)
         elif nn_type == 'CNN':
             self.model = CNN_Net(config,symXAxis,symYAxis)
+        elif nn_type == 'SIMP':
+            self.model = Simp(config,symXAxis,symYAxis)
 
     def forward(self, x,resolution, fixedIdx):
         return self.model(x,resolution, fixedIdx)
+    
+class Simp(nn.Module):
+    def __init__(self, config,symXAxis,symYAxis):
+        super(Simp,self).__init__()
+        self.nelx = config.nelx # to impose symm, get size of domain
+        self.nely = config.nely
+        self.inputDim = 2
+        if config.searchMode == 'simplex':
+            self.outputDim = 2 + config.simplexDim
+        elif config.searchMode == 'cubic':
+            self.outputDim = 1 + config.latentDim
+        self.symXAxis = symXAxis  # set T/F to impose symm
+        self.symYAxis = symYAxis
+        self.rho = torch.zeros((self.nelx*self.nely),requires_grad=True)
+        self.t = torch.ones((self.nelx*self.nely,self.outputDim),requires_grad=True)
+    def forward(self, x,resolution, fixedIdx = None):
+        rho = torch.sigmoid(self.rho)
+        t = torch.softmax(self.t,dim=1)
+        return rho, t
 
 class FC_Net(nn.Module):
     def __init__(self, config,symXAxis,symYAxis):

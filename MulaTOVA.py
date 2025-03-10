@@ -18,6 +18,8 @@ from TO_models import TopNet
 from utils import PytorchMinMaxScaler, plot_latent,setDevice,set_seed
 from material_models import MaterialModel
 from material_models import elasticity
+from utils import Logger
+import copy
 
 from matplotlib import rc
 rc('text', usetex=False)
@@ -75,6 +77,10 @@ class TopologyOptimizer:
         return torch.max(torch.flatten(grad_norm))
 
     def optimizeDesign(self,config):
+        train_logger = Logger(
+            osp.join(config.results_dir, self.exper_name+'train.log'),
+            ['ep', 'compliance','real_compliance']
+)
         self.convergenceHistory = [] 
         savedNetFileName = osp.join(config.results_dir, self.exampleName + '_'  + str(self.nelx) + '_' + str(self.nely) +  '.nt')
         savedMaterialNetFileName = osp.join(config.results_dir,self.exampleName + '_'  + str(self.nelx) + '_' + str(self.nely) +  'material.nt' )
@@ -87,8 +93,16 @@ class TopologyOptimizer:
                 self.topNet = torch.load(savedNetFileName) 
                 self.material_model = torch.load(savedMaterialNetFileName)
             else:
-                print("Network file not found") 
-        self.optimizer = optim.Adam(self.topNet.parameters(),lr=config.learningRate)
+                print("Network file not found")
+        if config.nn_type == 'SIMP':
+            #  nn_rho = 0.5*torch.ones((self.nelx*self.nely),requires_grad=True)
+            #  self.optimizer = optim.Adam((nn_rho,),lr=config.learningRate)
+             self.optimizer = torch.optim.Adam([
+                {'params': self.topNet.model.rho, 'lr': config.learningRate},
+                {'params': self.topNet.model.t, 'lr': config.learningRate}
+            ])  
+        else:
+            self.optimizer = optim.Adam(self.topNet.parameters(),lr=config.learningRate)
         w = self.cell_width
         batch_x =  self.xy.view(-1,2).float().to(device)
         for epoch in range(config.maxEpochs):
@@ -110,11 +124,13 @@ class TopologyOptimizer:
             objective = compliance/self.obj0
             
             volConstraint =((torch.mean(true_rho)/config.desiredVolumeFraction) - 1.0) 
-            gradConstraint = 1/(1+torch.exp(-2*(grad_norm-self.max_grad)))
             currentVolumeFraction = torch.mean(true_rho).item() 
             self.objective = objective
-            
-            loss = self.objective+ alpha*(pow(volConstraint,2)+gradConstraint)
+            if config.cell_type == "lattice": 
+                gradConstraint = 1/(1+torch.exp(-2*(grad_norm-self.max_grad)))
+                loss = self.objective+ alpha*(pow(volConstraint,2)+gradConstraint)
+            else:
+                loss = self.objective+ alpha*(pow(volConstraint,2))
             alpha = min(alphaMax, alpha + alphaIncrement) 
             loss.backward(retain_graph=True) 
             torch.nn.utils.clip_grad_norm_(self.topNet.parameters(),nrmThreshold)
@@ -128,24 +144,40 @@ class TopologyOptimizer:
             self.FE.penal = min(4.0,self.FE.penal + 0.01)  # continuation scheme
             if(epoch % 10 == 0):
                 if config.interactive:
-                    self.plotTO(epoch) 
-                print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
-                  .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, grad_norm.item(), loss.item(),relGreyElements))
+                    self.plotTO(epoch, saveFig=False,saveFrame=config.saveFrame) 
+                if config.cell_type == "lattice": 
+                    print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+                    .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, grad_norm.item(), loss.item(),relGreyElements))
+                else:
+                    print("{:3d} J: {:.2F}; Vf: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+                    .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, loss.item(),relGreyElements))
+                if config.record_real_compliance:
+                    real_compliance,dist = self.full_structure_FE(config.example,self.cell_type,nn_rho,w,interpolate_list)
+                    train_logger.log({
+                        'ep': epoch,             
+                        'compliance': compliance.item(),
+                        'real_compliance': real_compliance
+                    })
             if ((epoch > config.minEpochs ) & (relGreyElements < 0.035) & (volConstraint< 0) ):
                 break 
-        self.plotTO(epoch,True) 
-        print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+        self.plotTO(epoch,saveFig=True, saveFrame=config.saveFrame) 
+        if config.cell_type == "lattice": 
+            print("{:3d} J: {:.2F}; Vf: {:.3F}; GradNorm: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
                   .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, grad_norm.item(), loss.item(),relGreyElements))
+        else:
+            print("{:3d} J: {:.2F}; Vf: {:.3F}; loss: {:.3F}; relGreyElems: {:.3F} "\
+                  .format(epoch, self.objective.item()*self.obj0,currentVolumeFraction, loss.item(),relGreyElements))
         torch.save(self.topNet, savedNetFileName)
         torch.save(self.material_model, savedMaterialNetFileName)
         ### save data
 
-    def plotTO(self, iter,saveFig= False):
-        saveFrame = True  # set this T/F if you want to create frames- use for video
+    def plotTO(self, iter,saveFig=False, saveFrame=False):
         w = self.cell_width
         batch_x = self.xy.view(-1,2).float().to(device)  
         nn_rho,nn_t = self.topNet(batch_x,1,self.nonDesignIdx)
         nn_rho = nn_rho.to('cpu').detach().numpy()
+        nn_rho[nn_rho>0.5]=1
+        nn_rho[nn_rho<0.5]=0
         if self.cell_type == "lattice":     
             interpolate_list, nn_C, v = self.material_model.map2material(nn_t)
             interpolate_list_np = interpolate_list.detach().numpy()
@@ -173,11 +205,16 @@ class TopologyOptimizer:
              real_compliance = self.objective*self.obj0
         plt.xticks([])
         plt.yticks([])
-        plt.title('Iter = {:d}, J = {:.2F}, V_f = {:.2F}, V_des = {:.2F}'.format(iter, real_compliance, np.mean(true_rho),  self.desiredVolumeFraction),loc='left')
         plt.grid(False)
         axes = plt.gca()
-        cmap = 'Oranges'
-        cmap = plt.get_cmap(cmap) 
+        cmap = plt.get_cmap('Oranges')
+        axes.imshow(img,cmap=cmap,vmin=0,vmax=1)
+        if(saveFrame):
+            frame_file_name = osp.join(self.results_dir, 'frames','f_'+str(iter)+'.png')
+            plt.savefig(frame_file_name,transparent=True)
+            print("frame plotted")   
+
+        plt.title('Iter = {:d}, J = {:.2F}, V_f = {:.2F}, V_des = {:.2F}'.format(iter, real_compliance, np.mean(true_rho),  self.desiredVolumeFraction),loc='left')
         norm = matplotlib.colors.Normalize(vmin=0, vmax=1)
         m = cm.ScalarMappable(cmap=cmap, norm=norm)
         m.set_array([])
@@ -187,14 +224,13 @@ class TopologyOptimizer:
         cbar.ax.tick_params(labelsize=10)
         cbar.set_label("Density", fontsize=10)
         plt.ticklabel_format(style="plain")
-        axes.imshow(img,cmap=cmap,vmin=0,vmax=1)      
-        if(saveFrame):
-            frame_file_name = osp.join(self.results_dir, 'frames','f_'+'+str(iter)'+'.jpg')
-            plt.savefig(frame_file_name)            
+           
+        
+
         if (saveFig):    
-            fName = osp.join(self.results_dir, self.exampleName+'_topology.png')
-            plt.savefig(fName,dpi = 450)
-            data_file_nme = osp.join(self.results_dir, self.exampleName+'_img.npy')
+            fName = osp.join(self.results_dir, self.exper_name+'_topology.png')
+            plt.savefig(fName,dpi = 450,transparent=True)
+            data_file_nme = osp.join(self.results_dir, self.exper_name+'_img.npy')
             np.save(data_file_nme,img,allow_pickle=False)
         if self.interactive:  
             plt.pause(0.01)
