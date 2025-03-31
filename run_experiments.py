@@ -57,7 +57,7 @@ if config.verbose:
     pipe.log()
     sys.stdout.flush()
 
-overrideGPU = False
+overrideGPU = True
 device = setDevice(overrideGPU) 
 torch.autograd.set_detect_anomaly(True)
 
