@@ -19,7 +19,7 @@ default: &DEFAULT
   fno: True
   nn_type: 'FNO' # cnn no
   record_real_compliance: False
-  saveFrame: True
+  saveFrame: False
   numModex: 8
   numModey: 4
   searchMode: 'simplex' # simplex or cubic 
